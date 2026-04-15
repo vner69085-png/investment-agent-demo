@@ -18,12 +18,20 @@ client = Anthropic(
 
 
 def parse_json(text: str) -> dict:
-    """兼容模型输出带 markdown 代码块的情况"""
+    """兼容模型输出带 markdown 代码块、或 JSON 内含特殊标点的情况"""
     text = text.strip()
+    # 去掉 markdown 代码块
     match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
     if match:
         text = match.group(1).strip()
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # 提取最外层 { } 之间的内容后重试
+        brace_match = re.search(r"\{[\s\S]*\}", text)
+        if brace_match:
+            return json.loads(brace_match.group(0))
+        raise
 
 
 # ─────────────────────────────────────────
@@ -124,7 +132,7 @@ def run_search_agent(task: dict) -> dict:
     print(f"  [搜索Agent] 执行：{task['description']}")
     response = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=800,
+        max_tokens=1200,
         system=SEARCH_AGENT_PROMPT,
         messages=[{"role": "user", "content": f"任务ID：{task['id']}\n任务描述：{task['description']}"}]
     )
@@ -135,7 +143,7 @@ def run_fund_analysis_agent(task: dict) -> dict:
     print(f"  [基金分析Agent] 执行：{task['description']}")
     response = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=800,
+        max_tokens=1200,
         system=FUND_ANALYSIS_AGENT_PROMPT,
         messages=[{"role": "user", "content": f"任务ID：{task['id']}\n任务描述：{task['description']}"}]
     )
@@ -146,7 +154,7 @@ def run_fund_compare_agent(task: dict) -> dict:
     print(f"  [基金对比Agent] 执行：{task['description']}")
     response = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=800,
+        max_tokens=1200,
         system=FUND_COMPARE_AGENT_PROMPT,
         messages=[{"role": "user", "content": f"任务ID：{task['id']}\n任务描述：{task['description']}"}]
     )
@@ -207,8 +215,11 @@ def run(user_question: str):
     for task in subtasks:
         task_type = task.get("type")
         if task_type in AGENT_ROUTER:
-            result = AGENT_ROUTER[task_type](task)
-            results.append(result)
+            try:
+                result = AGENT_ROUTER[task_type](task)
+                results.append(result)
+            except Exception as e:
+                print(f"  [失败] 任务 {task['id']} 执行出错：{e}")
         else:
             print(f"  [跳过] 未知任务类型：{task_type}")
 
